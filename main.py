@@ -1,6 +1,5 @@
 # uvicorn main:app --reload
 from fastapi import FastAPI, HTTPException
-from models import MsgPayload
 import pickle
 import numpy as np
 from pydantic import BaseModel
@@ -8,13 +7,9 @@ import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 
 app = FastAPI()
-messages_list: dict[int, MsgPayload] = {}
 
 df = pd.read_csv("african_touristic_sites.csv") # updatable when model retrained
 feature_matrix = pd.read_csv("dataSet.csv") # updatable when model retrained
-
-# with open("similarity_matrix.pkl", "rb") as file:
-#     similarity_df = pickle.load(file) # updatable when model retrained
 
 @app.get("/")
 def root() -> dict[str, str]:
