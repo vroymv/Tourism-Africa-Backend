@@ -173,17 +173,37 @@ def preprocess_user_input(user_input, feature_columns, scaler_dict, country_regi
     return processed_input
 
 
+# without weights considered
 def find_best_matches(user_preferences, feature_matrix, sites, top_n=5):
-    provided_indices = list(map(int, user_preferences.keys()))  # Convert keys to integers
+    """
+    Find the top N best site matches based on user preferences, even if some values are missing.
+
+    Args:
+        user_preferences (dict): Dictionary of feature indices and values provided by the user.
+        feature_matrix (pd.DataFrame): The preprocessed dataset matrix.
+        sites (list): List of site names.
+        top_n (int): Number of matches to return (default=5).
+
+    Returns:
+        list: List of recommended site names.
+    """
+    # Extract the indices of provided features
+    provided_indices = list(user_preferences.keys())
 
     if not provided_indices:
         return ["No preferences provided. Cannot make a recommendation."]
 
+    # Convert feature matrix to only the provided features
     reduced_feature_matrix = feature_matrix.iloc[:, provided_indices]
-    user_vector = np.array([user_preferences[str(i)] for i in provided_indices]).reshape(1, -1)
 
+    # Convert user preferences into a vector matching the reduced feature matrix
+    user_vector = np.array([user_preferences[i] for i in provided_indices]).reshape(1, -1)
+
+    # Compute similarity between user preferences and available features of sites
     similarities = cosine_similarity(user_vector, reduced_feature_matrix)[0]
-    top_n_indices = np.argsort(similarities)[-top_n:][::-1]
+
+    # Get indices of the top N most similar sites
+    top_n_indices = np.argsort(similarities)[-top_n:][::-1]  # Sort in descending order
 
     return [sites[i] for i in top_n_indices]
 
@@ -192,7 +212,7 @@ def find_best_matches(user_preferences, feature_matrix, sites, top_n=5):
 def recommend_sites(data: UserPreferences):
     try:
         # Preprocess user preferences before passing to the recommendation function
-        processed_preferences = preprocess_user_input(data.preferences)
+        processed_preferences = preprocess_user_input(data.preferences, feature_columns, scaler_dict, country_regions)
 
         sites = df["Site_Name"].tolist()  # Extract site names
         recommendations = find_best_matches(processed_preferences, feature_matrix, sites, data.top_n)
