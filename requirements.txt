@@ -1,9 +1,6 @@
 fastapi
 uvicorn
-httpx
-numpy
 pandas
+numpy
 scikit-learn
-joblib
-pickle
 pydantic
