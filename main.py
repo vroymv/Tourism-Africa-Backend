@@ -1,5 +1,6 @@
 # uvicorn main:app --reload
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 import pandas as pd
 from pydantic import BaseModel
@@ -7,6 +8,15 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import MinMaxScaler
 
 app = FastAPI()
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all HTTP methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 # Load datasets
 df = pd.read_csv("african_touristic_sites.csv")  # Updatable when model retrained
