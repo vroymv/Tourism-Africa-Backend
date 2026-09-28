@@ -1,9 +1,13 @@
 # uvicorn main:app --reload
+import os
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from mangum import Mangum
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import MinMaxScaler
 import json
@@ -15,15 +19,16 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
-    allow_credentials=True,
-    allow_methods=["*"],  # Allows all HTTP methods
-    allow_headers=["*"],  # Allows all headers
+    allow_origins=[origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if origin.strip()],
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 # Load datasets
-df = pd.read_csv("african_touristic_sites.csv")  # Updatable when model retrained
-feature_matrix = pd.read_csv("dataSet.csv")  # Updatable when model retrained
+DATA_DIR = Path(__file__).resolve().parent
+df = pd.read_csv(DATA_DIR / "african_touristic_sites.csv")  # Updatable when model retrained
+feature_matrix = pd.read_csv(DATA_DIR / "dataSet.csv")  # Updatable when model retrained
 
 # Define feature columns mapping
 feature_columns = {
@@ -112,7 +117,7 @@ def display_label(value: str) -> str:
 def parse_number(value):
     if value is None or pd.isna(value):
         return None
-    cleaned = str(value).replace(",", "").replace("$", "").strip()
+    cleaned = str(value).replace(",", "").replace("$", "").replace(" ", "").strip()
     if not cleaned:
         return None
     try:
@@ -324,8 +329,8 @@ def root() -> dict[str, str]:
 
 # Define request body model
 class UserPreferences(BaseModel):
-    preferences: dict  # {feature_name: value}
-    top_n: int = 5  # Default: return top 5 matches
+    preferences: dict = Field(max_length=80)  # {feature_name: value}
+    top_n: int = Field(default=5, ge=1, le=20)
 
 
 # with user input as text
@@ -458,3 +463,7 @@ def recommend_sites(data: UserPreferences):
         return {"recommendations": recommendations}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# AWS Lambda Function URLs send API Gateway v2 events to this adapter.
+handler = Mangum(app)

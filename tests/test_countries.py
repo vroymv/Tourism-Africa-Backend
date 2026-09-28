@@ -114,5 +114,6 @@ def test_unknown_country_has_expected_error_body(country_data):
 def test_parse_number_supports_mixed_thousands_format():
     assert main.parse_number("10,00,000") == 1_000_000
     assert main.parse_number("$ 1,250") == 1250
+    assert main.parse_number("1 250") == 1250
     assert main.parse_number("free") is None
     assert main.parse_number("") is None
