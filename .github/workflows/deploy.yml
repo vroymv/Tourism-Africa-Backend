@@ -15,7 +15,6 @@ concurrency:
 
 env:
   AWS_REGION: eu-west-1
-  CORS_ORIGINS: ${{ vars.CORS_ORIGINS || 'http://localhost:3000' }}
   ECR_REPOSITORY: tourism-africa-api
   LAMBDA_FUNCTION: tourism-africa-api
 
@@ -40,6 +39,8 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     environment: production
+    env:
+      CORS_ORIGINS: ${{ vars.CORS_ORIGINS || 'http://localhost:3000' }}
     steps:
       - uses: actions/checkout@v4
 
