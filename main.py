@@ -76,9 +76,9 @@ feature_columns = {
 
 # Define scaling for numerical values
 scaler_dict = {
-    "Entry_Cost(USD)": MinMaxScaler().fit([[0], [1900]]),
-    "Rating": MinMaxScaler().fit([[1], [5]]),
-    "Country_Safety_Index": MinMaxScaler().fit([[1], [5]])
+    "Entry_Cost(USD)": MinMaxScaler().fit(np.array([[0], [1900]])),
+    "Rating": MinMaxScaler().fit(np.array([[1], [5]])),
+    "Country_Safety_Index": MinMaxScaler().fit(np.array([[1], [5]]))
 }
 
 # Define regions
@@ -220,20 +220,20 @@ async def cache_country_responses(request, call_next):
 def list_countries() -> dict:
     countries = df["Country"].fillna("").map(lambda value: str(value).strip().lower())
     counts = countries[countries != ""].value_counts()
-    results = [
-        {
+    results = []
+    for country, count in counts.items():
+        country = str(country)
+        results.append({
             "slug": re.sub(r"[\s-]+", "_", country),
             "name": display_label(country),
             "siteCount": int(count),
-        }
-        for country, count in counts.items()
-    ]
+        })
     results.sort(key=lambda country: (-country["siteCount"], country["name"].casefold()))
     return {"countries": results}
 
 
-@app.get("/countries/{country:path}")
-def get_country(country: str) -> dict:
+@app.get("/countries/{country:path}", response_model=None)
+def get_country(country: str) -> dict | JSONResponse:
     normalized_country = normalize_country(country)
     if not re.fullmatch(r"[a-z_]{2,64}", normalized_country):
         raise HTTPException(status_code=400, detail="Invalid country")
