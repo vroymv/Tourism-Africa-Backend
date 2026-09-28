@@ -49,10 +49,10 @@ def test_lambda_function_url_event():
     event = {
         "version": "2.0",
         "routeKey": "$default",
-        "rawPath": "/recommend/",
+        "rawPath": "/recommend",
         "rawQueryString": "",
         "headers": {"content-type": "application/json"},
-        "requestContext": {"http": {"method": "POST", "path": "/recommend/", "sourceIp": "127.0.0.1"}, "domainName": "example.lambda-url.us-east-1.on.aws", "stage": "$default"},
+        "requestContext": {"http": {"method": "POST", "path": "/recommend", "sourceIp": "127.0.0.1"}, "domainName": "example.lambda-url.us-east-1.on.aws", "stage": "$default"},
         "body": json.dumps({"preferences": {"category": "natural"}, "top_n": 2}),
         "isBase64Encoded": False,
     }

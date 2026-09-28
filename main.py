@@ -451,6 +451,7 @@ def find_best_matches(user_preferences, feature_matrix, sites, top_n=5):
     return [sites[i] for i in top_n_indices]
 
 
+@app.post("/recommend", include_in_schema=False)
 @app.post("/recommend/")
 def recommend_sites(data: UserPreferences):
     try:
