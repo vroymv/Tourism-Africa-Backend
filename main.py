@@ -6,6 +6,9 @@ import pandas as pd
 from pydantic import BaseModel
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import MinMaxScaler
+import json
+import re
+from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
@@ -87,6 +90,231 @@ country_regions = {
     "southern": ['Angola', 'Botswana', 'Eswatini', 'Lesotho', 'Namibia',
                  'South Africa', 'Zambia', 'Zimbabwe']
 }
+
+COUNTRY_ALIASES = {
+    "dr_congo": "drc",
+    "democratic_republic_of_the_congo": "drc",
+    "car": "central_african_republic",
+    "republic_of_the_congo": "congo",
+}
+
+
+def normalize_country(value: str) -> str:
+    country = re.sub(r"[\s-]+", "_", value.strip().lower())
+    return COUNTRY_ALIASES.get(country, country)
+
+
+def display_label(value: str) -> str:
+    label = re.sub(r"_+", " ", value.strip()).title()
+    return "DR Congo" if label.casefold() == "drc" else label
+
+
+def parse_number(value):
+    if value is None or pd.isna(value):
+        return None
+    cleaned = str(value).replace(",", "").replace("$", "").strip()
+    if not cleaned:
+        return None
+    try:
+        return float(cleaned)
+    except (TypeError, ValueError):
+        return None
+
+
+def _column_value(row, *column_names):
+    columns = {str(column).casefold(): column for column in row.index}
+    for name in column_names:
+        column = columns.get(name.casefold())
+        if column is not None:
+            value = row[column]
+            if value is not None and not pd.isna(value) and str(value).strip():
+                return value
+    return None
+
+
+def _model_number(value, field: str):
+    number = parse_number(value)
+    if number is None:
+        return None
+    # The checked-in CSV stores these three model inputs after MinMax scaling.
+    if 0 <= number <= 1:
+        if field == "Entry_Cost(USD)":
+            return number * 1900
+        if field in {"Rating", "Country_Safety_Index"}:
+            return 1 + number * 4
+    return number
+
+
+def _split_values(value):
+    if value is None or pd.isna(value):
+        return []
+    text = str(value).strip()
+    if not text:
+        return []
+    if text.startswith("["):
+        try:
+            decoded = json.loads(text)
+            if isinstance(decoded, list):
+                return [str(item).strip() for item in decoded if str(item).strip()]
+        except (TypeError, ValueError):
+            pass
+    return [item.strip() for item in re.split(r"[,;|]", text) if item.strip()]
+
+
+def _deduplicated_labels(values):
+    labels = []
+    seen = set()
+    for value in values:
+        label = display_label(str(value).replace(" ", "_").lower())
+        if label and label.casefold() not in seen:
+            seen.add(label.casefold())
+            labels.append(label)
+    return labels
+
+
+def _truthy_feature(value) -> bool:
+    if isinstance(value, str):
+        return value.strip().casefold() in {"1", "true", "yes"}
+    number = parse_number(value)
+    return number is not None and number > 0
+
+
+def _labels_for_site(row, fields, feature_prefixes=()):
+    values = []
+    for field in fields:
+        values.extend(_split_values(_column_value(row, field)))
+    for column in row.index:
+        for prefix in feature_prefixes:
+            if str(column).casefold().startswith(prefix.casefold()):
+                if _truthy_feature(row[column]):
+                    values.append(str(column)[len(prefix):])
+                break
+    return _deduplicated_labels(values)
+
+
+def _country_key(value) -> str:
+    return normalize_country(str(value))
+
+
+def _site_image(row):
+    image_values = []
+    for field in ("site_images", "Site_Images", "image", "Image"):
+        image_values.extend(_split_values(_column_value(row, field)))
+    return next((image for image in image_values if image.startswith("https://")), None)
+
+
+@app.middleware("http")
+async def cache_country_responses(request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/countries" or request.url.path.startswith("/countries/"):
+        response.headers["Cache-Control"] = "public, max-age=3600"
+    return response
+
+
+@app.get("/countries")
+def list_countries() -> dict:
+    countries = df["Country"].fillna("").map(lambda value: str(value).strip().lower())
+    counts = countries[countries != ""].value_counts()
+    results = [
+        {
+            "slug": re.sub(r"[\s-]+", "_", country),
+            "name": display_label(country),
+            "siteCount": int(count),
+        }
+        for country, count in counts.items()
+    ]
+    results.sort(key=lambda country: (-country["siteCount"], country["name"].casefold()))
+    return {"countries": results}
+
+
+@app.get("/countries/{country:path}")
+def get_country(country: str) -> dict:
+    normalized_country = normalize_country(country)
+    if not re.fullmatch(r"[a-z_]{2,64}", normalized_country):
+        raise HTTPException(status_code=400, detail="Invalid country")
+
+    country_rows = df[df["Country"].map(_country_key) == normalized_country]
+    if country_rows.empty:
+        return JSONResponse(status_code=404, content={"error": "Country not found"})
+
+    sites = []
+    ratings = []
+    safety_indices = []
+    visitor_counts = []
+    entry_costs = []
+    for _, row in country_rows.iterrows():
+        rating = _model_number(_column_value(row, "Rating", "rating"), "Rating")
+        safety = _model_number(
+            _column_value(row, "Country_Safety_Index", "country_safety_index"),
+            "Country_Safety_Index",
+        )
+        visitors = parse_number(_column_value(row, "annualVisitors", "annual_visitors", "Total_Annual_Visitors"))
+        entry_cost = _model_number(
+            _column_value(row, "Entry_Cost(USD)", "entryCostUsd", "entry_cost_usd"),
+            "Entry_Cost(USD)",
+        )
+        if rating is not None:
+            ratings.append(rating)
+        if safety is not None:
+            safety_indices.append(safety)
+        if visitors is not None:
+            visitor_counts.append(visitors)
+        if entry_cost is not None:
+            entry_costs.append(entry_cost)
+
+        sites.append({
+            "id": _column_value(row, "Site_ID", "id"),
+            "name": display_label(str(_column_value(row, "Site_Name", "name") or "")),
+            "city": _column_value(row, "City", "city"),
+            "categories": _labels_for_site(row, ("categories", "category"), ("Category/Type_",)),
+            "primaryAttractions": _labels_for_site(row, ("primaryAttractions", "primary_attractions"), ("Primary_Attraction_",)),
+            "description": _column_value(row, "Description", "description"),
+            "rating": rating,
+            "annualVisitors": visitors,
+            "entryCostUsd": entry_cost,
+            "image": _site_image(row),
+        })
+
+    sites.sort(key=lambda site: (site["rating"] is None, -(site["rating"] or 0), str(site["id"] or "")))
+    country_name = display_label(normalized_country)
+    currencies = list(dict.fromkeys(
+        value.upper()
+        for _, row in country_rows.iterrows()
+        for value in _split_values(_column_value(row, "currency", "currencies", "Currency"))
+    ))
+    airports = _deduplicated_labels(
+        [value for _, row in country_rows.iterrows() for value in _split_values(_column_value(row, "airports", "Airports"))]
+    )
+
+    return {"country": {
+        "slug": normalized_country,
+        "name": country_name,
+        "siteCount": int(len(country_rows)),
+        "averageRating": round(sum(ratings) / len(ratings), 1) if ratings else None,
+        "safetyIndex": round(sum(safety_indices) / len(safety_indices), 1) if safety_indices else None,
+        "totalAnnualVisitors": sum(visitor_counts) if visitor_counts else None,
+        "entryCostUsd": {
+            "min": min(entry_costs) if entry_costs else None,
+            "max": max(entry_costs) if entry_costs else None,
+        },
+        "currencies": currencies,
+        "bestTimesToVisit": _labels_for_country(country_rows, ("bestTimesToVisit", "best_times_to_visit"), ("Best_Time_to_Visit_",)),
+        "categories": _labels_for_country(country_rows, ("categories", "category"), ("Category/Type_",)),
+        "airports": airports,
+        "sites": sites,
+    }}
+
+
+def _labels_for_country(rows, fields, feature_prefixes=()):
+    values = []
+    for _, row in rows.iterrows():
+        values.extend(_labels_for_site(row, fields, feature_prefixes))
+    return _deduplicated_labels(values)
+
+
+@app.get("/about")
+def about() -> dict[str, str]:
+    return {"message": "This is the about page."}
 
 
 @app.get("/")
